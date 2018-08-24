@@ -26,10 +26,10 @@ def ping_local_host():
             util.get_project_settings()['id']
         )
         page_data = urllib.request.urlopen(project_edit_source).read()
-        stmt = re.search(r'salesforce-apex (.+) - Edit Project', page_data.decode('utf-8'))
+        stmt = re.search('\((.+)\) - Edit Project', page_data.decode('utf-8'))
         sandbox = ''
         if stmt.group(1):
-            sandbox = stmt.group(1)[1:-1]
+            sandbox = stmt.group(1)
         return sandbox
     except:
         return None
