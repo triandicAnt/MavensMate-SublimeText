@@ -8,6 +8,8 @@ import re
 import subprocess
 import time
 from xml.dom.minidom import parse
+import threading
+import urllib.request
 
 import MavensMate.config as config
 import MavensMate.util as util
@@ -22,6 +24,7 @@ from MavensMate.lib.completioncommon import *
 debug = None
 settings = sublime.load_settings('mavensmate.sublime-settings')
 sublime_version = int(float(sublime.version()))
+old_sandbox = None
 
 completioncommon = imp.load_source("completioncommon", os.path.join(os.path.dirname(os.path.abspath(__file__)), "lib","completioncommon.py"))
 apex_completions = util.parse_json_from_file(os.path.join(os.path.dirname(os.path.abspath(__file__)), "lib", "apex", "completions.json"))
@@ -66,12 +69,62 @@ def plugin_loaded():
             util.start_mavensmate_app(printer)
             time.sleep(1.5)
         if settings.get('mm_ping_mavensmate_server_on_startup', False):
+
             mm.ping_server()
+        f_stop = threading.Event()
+        # start calling fetch_sandbox now and every 5 sec thereafter
+        fetch_sandbox(f_stop)
+
+
     except Exception as e:
         printer.show()
         message = '[ERROR]: '+str(e)+'\n'
         printer.write('\n'+message+'\n')
         return
+
+def fetch_sandbox(f_stop):
+    global old_sandbox
+    active_window_id = sublime.active_window().id()
+    sandbox = mm.ping_local_host()
+    if sandbox and sandbox != old_sandbox:
+        old_sandbox = sandbox
+        printer = PanelPrinter.get(active_window_id)
+        printer.show()
+        printer.writeln(' ')
+        printer.writeln('Sandbox changed to : ' + sandbox)
+    if not f_stop.is_set():
+        threading.Timer(5, fetch_sandbox, [f_stop]).start()
+
+class SandboxStatusBarHandler(sublime_plugin.EventListener):
+    def update_status_bar(self, view):
+        sublime.set_timeout_async(lambda: self._update_status_bar(view))
+
+    def _update_status_bar(self, view):
+        if not view or view.is_scratch() or view.settings().get('is_widget'):
+            return
+        view.set_status("sandbox", '\t<< ' + old_sandbox + ' >>\t')
+
+    def on_new(self, view):
+        self.update_status_bar(view)
+
+    def on_load(self, view):
+        self.update_status_bar(view)
+
+    def on_activated(self, view):
+        self.update_status_bar(view)
+
+    def on_deactivated(self, view):
+        self.update_status_bar(view)
+
+    def on_post_save(self, view):
+        self.update_status_bar(view)
+
+    def on_pre_close(self, view):
+        self.update_status_bar(view)
+
+    def on_window_command(self, window, command_name, args):
+        if command_name == "hide_panel":
+            self.update_status_bar(window.active_view())
 
 ####### <--START--> COMMANDS THAT USE THE MAVENSMATE UI ##########
 

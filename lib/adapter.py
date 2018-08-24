@@ -13,8 +13,26 @@ from MavensMate.lib.response_handler import MavensMateResponseHandler
 from MavensMate.lib.exceptions import *
 import MavensMate.util as util
 import MavensMate.config as config
-
+import re
 debug = config.debug
+
+
+def ping_local_host():
+    try:
+        settings = sublime.load_settings('mavensmate.sublime-settings')
+        project_edit_source = 'http://localhost:{0}/app/project/edit?pid={1}'
+        project_edit_source = project_edit_source.format(
+            settings.get('mm_app_server_port', '56248'),
+            util.get_project_settings()['id']
+        )
+        page_data = urllib.request.urlopen(project_edit_source).read()
+        stmt = re.search(r'salesforce-apex (.+) - Edit Project', page_data.decode('utf-8'))
+        sandbox = ''
+        if stmt.group(1):
+            sandbox = stmt.group(1)[1:-1]
+        return sandbox
+    except:
+        return None
 
 def ping_server():
     try:
@@ -56,6 +74,7 @@ def call(operation, use_mm_panel=True, **kwargs):
 #thread that calls out to the mm tool
 #pushes to background threads and reads the piped response
 class MavensMateAdapterCall(threading.Thread):
+    old_sandbox = ''
     def __init__(self, operation, **kwargs):
         self.operation      = operation #operation being requested
         self.active_file    = kwargs.get('active_file', None)
@@ -73,6 +92,7 @@ class MavensMateAdapterCall(threading.Thread):
         self.alt_callback   = kwargs.get('callback', None) #this is a callback requested by a command
         self.window_id      = None
         self.status_region  = None
+        self.sandbox        = None
 
         self.settings = sublime.load_settings('mavensmate.sublime-settings')
         self.define_sublime_context()
@@ -81,20 +101,25 @@ class MavensMateAdapterCall(threading.Thread):
         if self.message == None:
             self.message = command_helper.get_message(self.body, self.operation)
 
+        new_sandbox = ping_local_host()
+        if new_sandbox and new_sandbox != MavensMateAdapterCall.old_sandbox:
+            MavensMateAdapterCall.old_sandbox = new_sandbox
+
         if self.use_mm_panel:
             self.printer.show()
             self.printer.writeln(' ')
             self.printer.writeln('                                                                          ')
-            self.printer.writeln('Operation: '+self.message)
-            self.printer.writeln('Timestamp: '+self.process_id)
+            self.printer.writeln('OPERATION : '+self.message)
+            self.printer.writeln('Timestamp : '+self.process_id)
+            self.printer.writeln('Sandbox   : '+MavensMateAdapterCall.old_sandbox)
             self.printer.writeln('   Result:           ')
         elif 'index' not in self.operation:
             ThreadProgress(self, self.message, 'Operation complete')
-
         threading.Thread.__init__(self)
 
     #ensures the thread has proper context (related to a specific window and/or view)
     def define_sublime_context(self):
+        global window
         try:
             if isinstance(self.context, sublime.View):
                 self.view = self.context
@@ -105,6 +130,7 @@ class MavensMateAdapterCall(threading.Thread):
             else:
                 self.window = sublime.active_window()
                 self.view = self.window.active_view()
+            window = self.window
         except:
             self.window = sublime.active_window()
             self.view = self.window.active_view()
@@ -152,7 +178,6 @@ class MavensMateAdapterCall(threading.Thread):
                 url = 'http://localhost:'+str(port_number)+'/status?id='+request_id
                 # url = 'http://localhost:'+str(port_number)+'/execute/'+request_id # this is the new call, but we don't need to use it for a while (until users are fully migrated to 0.0.11+)
                 req = urllib.request.Request(url, headers={'MavensMate-Editor-Agent': 'sublime'})
-
                 response = urllib.request.urlopen(url)
                 response_body = response.read().decode('utf-8')
                 status_response = json.loads(response_body)
